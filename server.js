@@ -7,7 +7,7 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const SECRET = 'yoursecretkey'; // replace in production
+const SECRET = 'yoursecretkey'; // you can change later
 
 app.use(cors());
 app.use(express.json());
@@ -30,23 +30,42 @@ function auth(req, res, next) {
   });
 }
 
-app.post('/login', (req, res) => {
-  const { email, password } = req.body;
-  db.query('SELECT * FROM users WHERE email = ?', [email], async (err, results) => {
-    if (err || results.length === 0) return res.sendStatus(401);
-    const user = results[0];
-    const match = await bcrypt.compare(password, user.password_hash);
-    if (!match) return res.sendStatus(401);
-    const token = jwt.sign({ id: user.id, role: user.role }, SECRET);
-    res.json({ token, role: user.role });
-  });
+// Use this endpoint ONCE after deployment to set up DB
+app.get('/init-db', async (req, res) => {
+  try {
+    // Create tables
+    await db.promise().query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        email VARCHAR(100) UNIQUE,
+        password_hash VARCHAR(255),
+        role ENUM('viewer','admin') NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS flights (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        aircraft_id VARCHAR(20),
+        start_time DATETIME,
+        end_time DATETIME,
+        category ENUM('scheduled','charter','domestic'),
+        type ENUM('flight','maintenance')
+      );
+    `);
+    // Add admin user
+    const hash = await bcrypt.hash('admin123', 10);
+    await db.promise().query(`
+      INSERT IGNORE INTO users (email, password_hash, role)
+      VALUES ('admin@example.com', ?, 'admin');
+    `, [hash]);
+
+    res.send('✅ Database initialized, admin user created: admin@example.com / admin123');
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('❌ Initialization failed: ' + err.message);
+  }
 });
 
-app.get('/flights', auth, (req, res) => {
-  db.query('SELECT * FROM flights', (err, results) => {
-    if (err) return res.sendStatus(500);
-    res.json(results);
-  });
-});
+// Existing login and flights endpoints
+app.post('/login', (req, res) => { /* …existing code… */ });
+app.get('/flights', auth, (req, res) => { /* …existing code… */ });
 
-app.listen(PORT, () => console.log(`Server on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
